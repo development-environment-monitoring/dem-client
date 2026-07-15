@@ -8,6 +8,7 @@ import datetime as dt
 import getpass
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -74,7 +75,25 @@ def normalize_output(stdout: str, stderr: str) -> str:
     return "\n".join(pieces)
 
 
-def execute_rule(command: str, expected_output: str) -> tuple[str, str]:
+def validate_output(output: str, validation_type: str, validation_value: str) -> bool:
+    validation_type = (validation_type or "").strip().lower()
+    validation_value = (validation_value or "").strip()
+
+    if not validation_type or not validation_value:
+        return True
+
+    if validation_type == "exact":
+        return output.strip() == validation_value
+
+    if validation_type == "regex":
+        return re.search(validation_value, output) is not None
+
+    return False
+
+
+def execute_rule(
+    command: str, validation_type: str, validation_value: str
+) -> tuple[str, str]:
     bash_path = shutil.which("bash")
 
     if bash_path:
@@ -94,12 +113,11 @@ def execute_rule(command: str, expected_output: str) -> tuple[str, str]:
         )
 
     output = normalize_output(completed.stdout, completed.stderr)
-    expected = expected_output.strip()
 
     if completed.returncode != 0:
         return "error", output
 
-    if expected and expected not in output:
+    if not validate_output(output, validation_type, validation_value):
         return "error", output
 
     return "success", output
@@ -129,13 +147,14 @@ def run(api_base_url: str, api_token: str) -> int:
         verification_id = rule.get("id")
         name = rule.get("name", "sem nome")
         command = rule.get("command", "")
-        expected_output = rule.get("expectedOutput", "")
+        validation_type = rule.get("validationType", "")
+        validation_value = rule.get("validationValue", "")
 
         if not verification_id or not command:
             print(f"Pulando regra invalida: {rule}")
             continue
 
-        result, output = execute_rule(command, expected_output)
+        result, output = execute_rule(command, validation_type, validation_value)
         processed_at = dt.datetime.now(dt.timezone.utc).isoformat()
 
         payload = {
